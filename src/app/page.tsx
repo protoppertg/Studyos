@@ -1,9 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
-import * as pdfjsLib from 'pdfjs-dist'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.372/pdf.worker.min.mjs`
 
 export default function Home() {
   const [session, setSession] = useState<any>(null)
@@ -60,29 +57,16 @@ export default function Home() {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      setAiMessage(`[${i + 1}/${files.length}] Reading ${file.name} in browser...`)
+      setAiMessage(`[${i + 1}/${files.length}] Uploading ${file.name} to AI...`)
 
       try {
-        const arrayBuffer = await file.arrayBuffer()
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-        let textContent = ''
-        
-        for (let pg = 1; pg <= pdf.numPages; pg++) {
-          const page = await pdf.getPage(pg)
-          const text = await page.getTextContent()
-          textContent += text.items.map((s: any) => s.str).join(' ') + '\n'
-        }
+        const formData = new FormData()
+        formData.append('file', file)
 
-        // Check if PDF is just scanned images
-        if (textContent.trim().length < 50) {
-          throw new Error(`${file.name} has no text. It might be a scanned image PDF. Try a typed PDF.`)
-        }
-
-        setAiMessage(`[${i + 1}/${files.length}] AI is analyzing ${file.name}...`)
+        setAiMessage(`[${i + 1}/${files.length}] AI is reading ${file.name}... (Takes 15-20 seconds)`)
         const res = await fetch('/api/extract', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: textContent })
+          body: formData
         })
 
         const aiData = await res.json()
@@ -93,7 +77,7 @@ export default function Home() {
         setAiMessage(`[${i + 1}/${files.length}] Saving ${file.name} to database...`)
         
         if (!aiData.subjects || aiData.subjects.length === 0) {
-          throw new Error(`AI found no subjects in ${file.name}. Check AI output.`)
+          throw new Error(`AI found no subjects in ${file.name}.`)
         }
 
         for (const subject of aiData.subjects) {
@@ -124,7 +108,6 @@ export default function Home() {
       } catch (error: any) {
         hadErrors = true
         setAiMessage(`Error on ${file.name}: ${error.message}`)
-        // Wait 3 seconds so the user can read the error before moving to the next file
         await new Promise(resolve => setTimeout(resolve, 3000))
       }
     }
@@ -132,7 +115,7 @@ export default function Home() {
     if (!hadErrors) {
       setAiMessage('All files processed successfully!')
     } else {
-      setAiMessage('Finished processing, but some files had errors. See above.')
+      setAiMessage('Finished processing, but some files had errors.')
     }
     fetchSubjects()
     setUploading(false)
@@ -176,7 +159,7 @@ export default function Home() {
 
         <div className="bg-gray-900 p-6 rounded-xl shadow-2xl border border-gray-800 mb-8">
           <h2 className="text-xl font-semibold mb-4">Bulk Upload Syllabus</h2>
-          <p className="text-gray-400 mb-4">Select multiple PDFs at once. The browser will read them instantly and the AI will extract the data in seconds.</p>
+          <p className="text-gray-400 mb-4">Select multiple PDFs at once. The AI will read them (even scanned photos) and extract the data.</p>
           
           <label className="w-full flex items-center justify-center px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-lg text-white font-semibold cursor-pointer transition">
             {uploading ? 'Processing Queue...' : '📎 Select Multiple Syllabus PDFs'}
