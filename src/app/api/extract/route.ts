@@ -3,16 +3,20 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export async function POST(req: Request) {
   try {
-    const { text } = await req.json();
-
-    if (!text) {
-      return NextResponse.json({ error: 'No text provided' }, { status: 400 });
+    const formData = await req.formData();
+    const file = formData.get('file') as File;
+    
+    if (!file) {
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.AI_API_KEY!);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.7-flash' });
+    const arrayBuffer = await file.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
 
-    const prompt = `You are an academic assistant. Extract the subjects, chapters, and topics from this syllabus text.
+    const genAI = new GoogleGenerativeAI(process.env.AI_API_KEY!);
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
+
+    const prompt = `You are an academic assistant. Extract the subjects, chapters, and topics from this syllabus document. 
     Return ONLY valid JSON in this exact format, no markdown formatting:
     {
       "subjects": [
@@ -28,13 +32,14 @@ export async function POST(req: Request) {
           ]
         }
       ]
-    }
-    
-    Syllabus Text: ${text}`;
+    }`;
 
-    const result = await model.generateContent(prompt);
+    const result = await model.generateContent([
+      { inlineData: { data: base64, mimeType: file.type || 'application/pdf' } },
+      { text: prompt }
+    ]);
+
     const responseText = result.response.text();
-    
     const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     const data = JSON.parse(cleanText);
 
