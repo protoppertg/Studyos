@@ -56,6 +56,7 @@ export default function Home() {
     if (files.length === 0 || !session) return
 
     setUploading(true)
+    let hadErrors = false
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
@@ -72,6 +73,11 @@ export default function Home() {
           textContent += text.items.map((s: any) => s.str).join(' ') + '\n'
         }
 
+        // Check if PDF is just scanned images
+        if (textContent.trim().length < 50) {
+          throw new Error(`${file.name} has no text. It might be a scanned image PDF. Try a typed PDF.`)
+        }
+
         setAiMessage(`[${i + 1}/${files.length}] AI is analyzing ${file.name}...`)
         const res = await fetch('/api/extract', {
           method: 'POST',
@@ -79,29 +85,36 @@ export default function Home() {
           body: JSON.stringify({ text: textContent })
         })
 
-        if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(`Server Error on ${file.name}: ${errorText}`);
+        const aiData = await res.json()
+        if (!res.ok || aiData.error) {
+          throw new Error(`AI Error on ${file.name}: ${aiData.error || res.statusText}`)
         }
 
-        const aiData = await res.json();
-        if (aiData.error) throw new Error(aiData.error);
-
         setAiMessage(`[${i + 1}/${files.length}] Saving ${file.name} to database...`)
+        
+        if (!aiData.subjects || aiData.subjects.length === 0) {
+          throw new Error(`AI found no subjects in ${file.name}. Check AI output.`)
+        }
+
         for (const subject of aiData.subjects) {
-          const { data: subData } = await supabase
+          const { data: subData, error: subError } = await supabase
             .from('subjects').insert([{ name: subject.name, user_id: session.user.id }]).select('id').single()
+          
+          if (subError) throw new Error(`DB Error saving subject: ${subError.message}`)
           
           if (subData && subject.chapters) {
             for (const chapter of subject.chapters) {
-              const { data: chapData } = await supabase
+              const { data: chapData, error: chapError } = await supabase
                 .from('chapters').insert([{ name: chapter.name, subject_id: subData.id, user_id: session.user.id }]).select('id').single()
+              
+              if (chapError) throw new Error(`DB Error saving chapter: ${chapError.message}`)
               
               if (chapData && chapter.topics) {
                 const topicArray = chapter.topics.map((t: any) => ({
                   name: t.name, chapter_id: chapData.id, user_id: session.user.id
                 }))
-                await supabase.from('topics').insert(topicArray)
+                const { error: topicError } = await supabase.from('topics').insert(topicArray)
+                if (topicError) throw new Error(`DB Error saving topics: ${topicError.message}`)
               }
             }
           }
@@ -109,11 +122,18 @@ export default function Home() {
         setAiMessage(`[${i + 1}/${files.length}] ${file.name} completed!`)
 
       } catch (error: any) {
+        hadErrors = true
         setAiMessage(`Error on ${file.name}: ${error.message}`)
+        // Wait 3 seconds so the user can read the error before moving to the next file
+        await new Promise(resolve => setTimeout(resolve, 3000))
       }
     }
 
-    setAiMessage('All files processed!')
+    if (!hadErrors) {
+      setAiMessage('All files processed successfully!')
+    } else {
+      setAiMessage('Finished processing, but some files had errors. See above.')
+    }
     fetchSubjects()
     setUploading(false)
   }
@@ -162,7 +182,7 @@ export default function Home() {
             {uploading ? 'Processing Queue...' : '📎 Select Multiple Syllabus PDFs'}
             <input type="file" accept="application/pdf" multiple className="hidden" onChange={handleSyllabusUpload} disabled={uploading} />
           </label>
-          {aiMessage && <p className="mt-4 text-center text-sm text-blue-400 animate-pulse">{aiMessage}</p>}
+          {aiMessage && <p className="mt-4 text-center text-sm text-blue-400 animate-pulse whitespace-pre-wrap">{aiMessage}</p>}
         </div>
 
         {!selectedSubject ? (
